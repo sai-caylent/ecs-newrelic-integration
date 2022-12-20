@@ -1,0 +1,131 @@
+################################################################################
+# ecr repository
+################################################################################
+resource "aws_ecr_repository" "main" {
+  name                 = "${var.prefix}-project"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = false
+  }
+}
+################################################################################
+# ecs cluster
+################################################################################
+resource "aws_ecs_cluster" "main" {
+  name = "${var.prefix}-cluster"
+}
+#############ecs task definition####################################
+# resource "aws_ecs_task_definition" "main" {
+#   network_mode             = "awsvpc"
+#   family                   = "${var.name}-task-def"
+#   requires_compatibilities = ["FARGATE"]
+#   cpu                      = 256
+#   memory                   = 512
+#   execution_role_arn       = data.aws_iam_role.example.arn
+#   # task_role_arn            = aws_iam_role.ecs_task_role.arn
+#   container_definitions = jsonencode([{
+#     name      = "${var.name}-container-${var.environment}"
+#     image     = "${var.container_image}:latest"
+#     essential = true
+#     #  environment = var.container_environment
+#     portMappings = [{
+#       protocol      = "tcp"
+#       containerPort = var.container_port
+#       hostPort      = var.container_port
+#     }]
+#   }])
+# }
+resource "aws_ecs_task_definition" "main" {
+  network_mode             = "awsvpc"
+  family                   = "${var.name}-task-def"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = data.aws_iam_role.newrelic.arn
+  # task_role_arn            = aws_iam_role.ecs_task_role.arn
+  container_definitions = <<TASK_DEFINITION
+  [{
+        "portMappings": [
+          {
+            "hostPort": 80,
+            "protocol": "tcp",
+            "containerPort": 80
+          }
+        ],
+        "image": "${var.container_image}:latest",
+        "name": "${var.name}-container-${var.environment}",
+
+        "logConfiguration": {
+	      "logDriver": "awslogs",
+	      "options": {
+		            "awslogs-group": "f45task",
+		            "awslogs-region": "us-east-2",
+		            "awslogs-stream-prefix": "f45ecs",
+                "awslogs-create-group": "true"
+		               }
+            }},
+      {
+        "environment": [
+          {
+            "name": "NRIA_OVERRIDE_HOST_ROOT",
+            "value": ""
+          },
+          {
+            "name": "NRIA_IS_FORWARD_ONLY",
+            "value": "true"
+          },
+          {
+            "name": "FARGATE",
+            "value": "true"
+          },
+          {
+            "name": "NRIA_PASSTHROUGH_ENVIRONMENT",
+            "value": "ECS_CONTAINER_METADATA_URI,ECS_CONTAINER_METADATA_URI_V4,FARGATE"
+          },
+          {
+            "name": "NRIA_CUSTOM_ATTRIBUTES",
+            "value": "{\"nrDeployMethod\":\"downloadPage\"}"
+          }
+        ],
+        "secrets": [
+          {
+            "valueFrom": "arn:aws:secretsmanager:us-east-2:131578276461:secret:NewRelicLicenseKeySecret-tDqeTIeqo91T-tW3ZZS",
+            "name": "NRIA_LICENSE_KEY"
+          }
+        ],
+        "cpu": 256,
+        "memoryReservation": 512,
+        "image": "newrelic/nri-ecs:1.9.7",
+        "name": "newrelic-infra"
+      }]
+      TASK_DEFINITION
+}
+
+# ecs service##################################################################
+resource "aws_ecs_service" "main" {
+  name                               = "${var.name}-service-${var.environment}"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.main.arn
+  desired_count                      = 1
+  deployment_minimum_healthy_percent = 50
+  deployment_maximum_percent         = 200
+  launch_type                        = "FARGATE"
+  scheduling_strategy                = "REPLICA"
+
+  network_configuration {
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    subnets          = data.aws_subnets.Public.ids
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.test.arn
+    container_name   = "${var.name}-container-${var.environment}"
+    container_port   = var.container_port
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition, desired_count]
+  }
+}

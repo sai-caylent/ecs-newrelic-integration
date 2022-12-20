@@ -1,17 +1,19 @@
-resource "random_password" "password" {
-  length           = 16
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.37"
+    }
+  }
+  required_version = ">= 1.3.3"
 }
-
-
-resource "aws_ssm_parameter" "secret" {
-  name        = var.secret_name
-  description = "The parameter description"
-  type        = "SecureString"
-  value       = random_password.password.result
-
-  tags = {
-    environment = "production"
+provider "aws" {
+  region = "us-east-2"
+  default_tags {
+    tags = {
+      Environment = "Test"
+      Owner       = "sai"
+      Project     = "F45"
+    }
   }
 }
